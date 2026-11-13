@@ -1,3 +1,4 @@
+![项目预览](./preview.png)
 # ✨ 银河相册
 > 基于 Three.js + Cloudflare Pages + Cloudflare Worker + R2 + Zero Trust Access 实现的私人星云相册。
 > 将照片化作宇宙星辰，点击星星查看照片，支持多组星云相册，基于邮箱鉴权保护你的私人图片。
