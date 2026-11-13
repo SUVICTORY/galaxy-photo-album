@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>这里是标题</title>
+    <style>
+        /* ... 样式保持不变，省略以节省篇幅 ... */
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', 'Poppins', 'Georgia', serif; }
+        #info { position: absolute; bottom: 25px; left: 25px; color: rgba(255,255,255,0.9); background: rgba(0,0,0,0.5); backdrop-filter: blur(8px); padding: 12px 24px; border-radius: 40px; font-size: 14px; pointer-events: none; z-index: 10; border-left: 3px solid #b8a9ff; }
+        #info span { color: #b8a9ff; font-weight: 600; }
+        .controls { position: absolute; bottom: 30px; left: 0; right: 0; display: flex; justify-content: center; gap: 15px; z-index: 20; pointer-events: none; }
+        .controls button { pointer-events: auto; background: rgba(0,0,0,0.6); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.3); color: #f0eaff; padding: 8px 20px; border-radius: 40px; font-size: 14px; cursor: pointer; transition: all 0.2s; font-family: monospace; }
+        .controls button:hover { background: rgba(180,170,255,0.4); border-color: #b8a9ff; transform: scale(1.02); }
+        .controls button.active { background: #b8a9ff; color: #020210; border-color: #ffffff; }
+        .galaxy-name { position: absolute; top: 25px; left: 25px; color: rgba(255,255,255,0.8); background: rgba(0,0,0,0.4); backdrop-filter: blur(8px); padding: 8px 20px; border-radius: 40px; font-size: 20px; font-weight: 500; letter-spacing: 2px; pointer-events: none; z-index: 10; font-family: monospace; }
+        .galaxy-name small { font-size: 12px; opacity: 0.7; margin-left: 8px; }
+        .instruction { position: absolute; bottom: 25px; right: 25px; color: rgba(255,255,255,0.5); font-size: 12px; background: rgba(0,0,0,0.3); padding: 6px 12px; border-radius: 20px; pointer-events: none; font-family: monospace; }
+        .photo-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0); background: rgba(10,10,30,0.95); backdrop-filter: blur(20px); border-radius: 32px; padding: 20px; z-index: 1000; max-width: 85vw; max-height: 85vh; box-shadow: 0 0 80px rgba(180,170,255,0.4); border: 1px solid rgba(255,255,255,0.3); transition: transform 0.4s cubic-bezier(0.34, 1.2, 0.64, 1); opacity: 0; visibility: hidden; }
+        .photo-modal.show { transform: translate(-50%, -50%) scale(1); opacity: 1; visibility: visible; }
+        .photo-modal img { max-width: 100%; max-height: 70vh; border-radius: 20px; display: block; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .photo-title { text-align: center; color: #ffdd99; margin-top: 16px; font-size: 18px; letter-spacing: 2px; }
+        .close-btn { position: absolute; top: 16px; right: 24px; color: white; font-size: 32px; cursor: pointer; background: rgba(0,0,0,0.5); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+        .close-btn:hover { background: rgba(255,100,100,0.8); transform: rotate(90deg); }
+        @media (max-width: 600px) { .galaxy-name { font-size: 14px; top: 15px; left: 15px; } .photo-title { font-size: 14px; } .close-btn { width: 32px; height: 32px; font-size: 24px; } .controls button { padding: 6px 12px; font-size: 10px; } }
+    </style>
+</head>
+<body>
+    <div id="info">✨ 银河相册 · 点击下方按钮切换星云 ✨<br><span>这里是标题</span></div>
+    <div class="galaxy-name" id="galaxyName">加载中... <small>· 请稍候</small></div>
+    <div class="controls" id="controls"></div>
+    <div class="instruction">🖱️ 鼠标拖拽旋转视角 · 点击星星查看照片</div>
+    <div class="photo-modal" id="photoModal">
+        <span class="close-btn">&times;</span>
+        <img id="modalImage" src="" alt="photo">
+        <div class="photo-title" id="modalTitle"></div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        
+        // ============================================================
+        // 📸 从 Worker 动态加载照片数据
+        // ============================================================
+        // 替换成你的 Worker 地址
+        const WORKER_URL = '替换成你的 Worker 地址';
+        
+        let galaxies = [];
+        let galaxyGroups = [];
+        let currentGalaxyIndex = 0;
+        
+        // 加载照片数据
+        async function loadPhotos() {
+            try {
+                const response = await fetch(WORKER_URL);
+                galaxies = await response.json();
+                console.log(`✅ 加载了 ${galaxies.length} 个星云`, galaxies);
+                
+                // 初始化 Three.js 场景
+                initThree();
+                // 创建所有星系
+                createAllGalaxies();
+                // 创建按钮
+                createButtons();
+                // 启动动画
+                startAnimation();
+                
+                // 切换到第一个星云
+                setTimeout(() => switchToGalaxy(0), 500);
+            } catch (error) {
+                console.error('❌ 加载照片失败:', error);
+                document.getElementById('galaxyName').innerHTML = '加载失败 <small>· 请刷新重试</small>';
+            }
+        }
+        
+        // ============================================================
+        // Three.js 初始化
+        // ============================================================
+        let scene, camera, renderer, controls, effectComposer, bgStars;
+        
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020210);
+            scene.fog = new THREE.FogExp2(0x020210, 0.006);
+            
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+            
+            // 后期特效
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.2, 0.4);
+            bloomPass.threshold = 0.2;
+            bloomPass.strength = 0.4;
+            effectComposer = new EffectComposer(renderer);
+            effectComposer.addPass(renderScene);
+            effectComposer.addPass(bloomPass);
+            
+            // 轨道控制
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.enableZoom = true;
+            controls.zoomSpeed = 1.0;
+            controls.rotateSpeed = 1.0;
+            
+            // 背景星空
+            const bgStarCount = 2500;
+            const bgGeo = new THREE.BufferGeometry();
+            const bgPositions = new Float32Array(bgStarCount * 3);
+            for (let i = 0; i < bgStarCount; i++) {
+                bgPositions[i*3] = (Math.random() - 0.5) * 200;
+                bgPositions[i*3+1] = (Math.random() - 0.5) * 100;
+                bgPositions[i*3+2] = (Math.random() - 0.5) * 100 - 50;
+            }
+            bgGeo.setAttribute('position', new THREE.BufferAttribute(bgPositions, 3));
+            const bgMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.06, transparent: true, opacity: 0.5 });
+            bgStars = new THREE.Points(bgGeo, bgMat);
+            scene.add(bgStars);
+            
+            // 灯光
+            const ambientLight = new THREE.AmbientLight(0x111122);
+            scene.add(ambientLight);
+            const pointLight = new THREE.PointLight(0xffaa88, 0.5, 30);
+            pointLight.position.set(0, 3, 0);
+            scene.add(pointLight);
+        }
+        
+        // 创建圆形纹理
+        function createCircleTexture(colorHex) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.beginPath();
+            ctx.arc(32, 32, 28, 0, 2 * Math.PI);
+            const r = parseInt(colorHex.slice(1,3), 16);
+            const g = parseInt(colorHex.slice(3,5), 16);
+            const b = parseInt(colorHex.slice(5,7), 16);
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 28);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, 0.9)`);
+            gradient.addColorStop(0.8, `rgba(${r}, ${g}, ${b}, 0.4)`);
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+        
+        const spacing = 22;
+        
+        function createGalaxy(galaxyData, index) {
+            const group = new THREE.Group();
+            
+            const config = { branches: 4, radius: 10, spin: 1.2, randomness: 0.25 };
+            
+            function getSpiralPosition(idx, total, conf) {
+    const t = idx / total;
+    // 最小半径 0.8，确保星星不会飘进核心球体
+    const minRadius = 0.8;
+    const maxRadius = conf.radius;
+    const radius = minRadius + (maxRadius - minRadius) * t;
+    
+    const angle = t * Math.PI * 2 * conf.spin;
+    const branchAngle = (idx % conf.branches) * (Math.PI * 2 / conf.branches);
+    const finalAngle = angle + branchAngle;
+    const randomOffset = conf.randomness * (Math.random() - 0.5) * radius * 0.5;
+    const x = Math.cos(finalAngle) * (radius + randomOffset);
+    const z = Math.sin(finalAngle) * (radius + randomOffset);
+    const y = (Math.random() - 0.5) * 0.8 * (1 - t) + Math.sin(radius * 1.2) * 0.15;
+    return { x, y, z };
+}
+            
+            const stars = [];
+            galaxyData.photos.forEach((photo, idx) => {
+                const pos = getSpiralPosition(idx, galaxyData.photos.length, config);
+                const texture = createCircleTexture(galaxyData.starColorTheme);
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([pos.x, pos.y, pos.z]), 3));
+                const material = new THREE.PointsMaterial({
+                    color: 0xffffff, map: texture, size: photo.size,
+                    transparent: true, blending: THREE.AdditiveBlending
+                });
+                const star = new THREE.Points(geometry, material);
+                star.userData = { photoUrl: photo.url, title: photo.title, originalSize: photo.size };
+                group.add(star);
+                stars.push(star);
+            });
+            
+            // 旋臂粒子
+            const armCount = 800;
+            const armGeo = new THREE.BufferGeometry();
+            const armPositions = new Float32Array(armCount * 3);
+            for (let i = 0; i < armCount; i++) {
+                const t = i / armCount;
+                const radius = config.radius * t;
+                const angle = t * Math.PI * 2 * config.spin;
+                const branchAngle = (i % config.branches) * (Math.PI * 2 / config.branches);
+                const finalAngle = angle + branchAngle;
+                armPositions[i*3] = Math.cos(finalAngle) * radius;
+                armPositions[i*3+1] = (Math.random() - 0.5) * 0.4;
+                armPositions[i*3+2] = Math.sin(finalAngle) * radius;
+            }
+            armGeo.setAttribute('position', new THREE.BufferAttribute(armPositions, 3));
+            const armMat = new THREE.PointsMaterial({ color: galaxyData.innerColor, size: 0.04, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending });
+            const armParticles = new THREE.Points(armGeo, armMat);
+            group.add(armParticles);
+            
+            // 核心光晕
+            const coreGeo = new THREE.SphereGeometry(0.45, 32, 32);
+            const coreMat = new THREE.MeshBasicMaterial({ color: galaxyData.innerColor, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending });
+            const core = new THREE.Mesh(coreGeo, coreMat);
+            group.add(core);
+            
+            // 星云粒子
+            const nebulaCount = 400;
+            const nebulaGeo = new THREE.BufferGeometry();
+            const nebulaPositions = new Float32Array(nebulaCount * 3);
+            for (let i = 0; i < nebulaCount; i++) {
+                const r = 3 + Math.random() * 8;
+                const angle = Math.random() * Math.PI * 2;
+                nebulaPositions[i*3] = Math.cos(angle) * r;
+                nebulaPositions[i*3+1] = (Math.random() - 0.5) * 2;
+                nebulaPositions[i*3+2] = Math.sin(angle) * r;
+            }
+            nebulaGeo.setAttribute('position', new THREE.BufferAttribute(nebulaPositions, 3));
+            const nebulaMat = new THREE.PointsMaterial({ color: galaxyData.outerColor, size: 0.08, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending });
+            const nebulae = new THREE.Points(nebulaGeo, nebulaMat);
+            group.add(nebulae);
+            
+            group.userData = { stars, galaxyData };
+            return group;
+        }
+        
+        function createAllGalaxies() {
+            galaxyGroups.forEach(group => scene.remove(group));
+            galaxyGroups = [];
+            
+            galaxies.forEach((galaxy, idx) => {
+                const group = createGalaxy(galaxy, idx);
+                group.position.x = idx * spacing;
+                scene.add(group);
+                galaxyGroups.push(group);
+            });
+        }
+        
+        function createButtons() {
+            const controlsDiv = document.getElementById('controls');
+            controlsDiv.innerHTML = '';
+            galaxies.forEach((galaxy, idx) => {
+                const btn = document.createElement('button');
+                btn.textContent = galaxy.name;
+                btn.addEventListener('click', () => switchToGalaxy(idx));
+                controlsDiv.appendChild(btn);
+            });
+        }
+        
+        function switchToGalaxy(index) {
+            currentGalaxyIndex = index;
+            const targetPos = new THREE.Vector3(index * spacing, 0, 0);
+            controls.target.copy(targetPos);
+            camera.position.copy(targetPos.clone().add(new THREE.Vector3(0, 2, 8)));
+            controls.update();
+            
+            document.getElementById('galaxyName').innerHTML = `${galaxies[index].name} <small>· ${galaxies[index].nameEn}</small>`;
+            const btns = document.querySelectorAll('.controls button');
+            btns.forEach((btn, i) => {
+                if (i === index) btn.classList.add('active');
+                else btn.classList.remove('active');
+            });
+        }
+        
+        // 交互
+        let currentHovered = null;
+        const raycaster = new THREE.Raycaster();
+        raycaster.params.Points.threshold = 0.08;
+        const mouse = new THREE.Vector2();
+        
+        function getAllStars() {
+            const stars = [];
+            galaxyGroups.forEach(group => {
+                if (group.userData && group.userData.stars) stars.push(...group.userData.stars);
+            });
+            return stars;
+        }
+        
+        function showPhoto(photoUrl, title) {
+    const modal = document.getElementById('photoModal');
+    const modalImg = document.getElementById('modalImage');
+    const modalTitle = document.getElementById('modalTitle');
+    
+    // 🔧 关键改动：先清空旧图片和标题
+    modalImg.src = '';
+    modalTitle.innerText = '加载中...';
+    
+    // 显示弹窗（此时是空的或显示加载中）
+    modal.classList.remove('show');
+    void modal.offsetWidth;
+    modal.classList.add('show');
+    
+    // 创建新图片对象，预加载完成后才显示
+    const tempImg = new Image();
+    tempImg.onload = function() {
+        modalImg.src = photoUrl;
+        modalTitle.innerText = title;
+    };
+    tempImg.onerror = function() {
+        modalTitle.innerText = '加载失败，请重试';
+    };
+    tempImg.src = photoUrl;
+}
+        
+        window.addEventListener('click', (e) => {
+            if (e.target.closest('.photo-modal')) return;
+            mouse.x = (e.clientX / renderer.domElement.clientWidth) * 2 - 1;
+            mouse.y = -(e.clientY / renderer.domElement.clientHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const stars = getAllStars();
+            const intersects = raycaster.intersectObjects(stars);
+            if (intersects.length > 0) {
+                const { photoUrl, title } = intersects[0].object.userData;
+                if (photoUrl) showPhoto(photoUrl, title);
+                e.stopPropagation();
+            }
+        });
+        
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = (e.clientX / renderer.domElement.clientWidth) * 2 - 1;
+            mouse.y = -(e.clientY / renderer.domElement.clientHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const stars = getAllStars();
+            const intersects = raycaster.intersectObjects(stars);
+            if (intersects.length > 0) {
+                const hit = intersects[0].object;
+                if (currentHovered !== hit) {
+                    if (currentHovered) currentHovered.material.size = currentHovered.userData.originalSize;
+                    currentHovered = hit;
+                    currentHovered.material.size = currentHovered.userData.originalSize * 1.5;
+                    document.body.style.cursor = 'pointer';
+                }
+            } else {
+                if (currentHovered) {
+                    currentHovered.material.size = currentHovered.userData.originalSize;
+                    currentHovered = null;
+                    document.body.style.cursor = 'default';
+                }
+            }
+        });
+        
+        document.querySelector('.close-btn').addEventListener('click', () => {
+            document.getElementById('photoModal').classList.remove('show');
+        });
+        document.getElementById('photoModal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('photoModal')) {
+                document.getElementById('photoModal').classList.remove('show');
+            }
+        });
+        
+        let animTime = 0;
+        function animate() {
+            requestAnimationFrame(animate);
+            animTime += 0.008;
+            if (controls) controls.update();
+            galaxyGroups.forEach((group, idx) => {
+                group.rotation.y = Math.sin(animTime * 0.2 + idx) * 0.08;
+            });
+            const allStars = getAllStars();
+            allStars.forEach((star, idx) => {
+                const posAttr = star.geometry.attributes.position;
+                const y = star.userData.floatY !== undefined ? star.userData.floatY : posAttr.getY(0);
+                if (star.userData.floatY === undefined) star.userData.floatY = y;
+                posAttr.setY(0, star.userData.floatY + Math.sin(animTime * 0.8 + idx) * 0.015);
+                posAttr.needsUpdate = true;
+            });
+            if (bgStars) bgStars.rotation.y += 0.0003;
+            if (effectComposer) effectComposer.render();
+        }
+        
+        function startAnimation() { animate(); }
+        
+        window.addEventListener('resize', () => {
+            if (camera) {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                if (effectComposer) effectComposer.setSize(window.innerWidth, window.innerHeight);
+            }
+        });
+        
+        // 启动加载
+        loadPhotos();
+    </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" data-cf-beacon='{"version":"2024.11.0","token":"a2b525e5adc1434a95c2b1b77a8f5554","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>
